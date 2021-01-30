@@ -13,7 +13,7 @@ import (
 type AssetStatsProcessor struct {
 	assetStatsQ history.QAssetStats
 
-	cache               *ingest.LedgerEntryChangeCache
+	cache               *ingest.ChangeCompactor
 	assetStatSet        AssetStatSet
 	useLedgerEntryCache bool
 }
@@ -36,7 +36,7 @@ func NewAssetStatsProcessor(
 }
 
 func (p *AssetStatsProcessor) reset() {
-	p.cache = ingest.NewLedgerEntryChangeCache()
+	p.cache = ingest.NewChangeCompactor()
 	p.assetStatSet = AssetStatSet{}
 }
 

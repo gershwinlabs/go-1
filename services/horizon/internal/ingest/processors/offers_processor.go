@@ -15,7 +15,7 @@ type OffersProcessor struct {
 	offersQ  history.QOffers
 	sequence uint32
 
-	cache       *ingest.LedgerEntryChangeCache
+	cache       *ingest.ChangeCompactor
 	insertBatch history.OffersBatchInsertBuilder
 	removeBatch []int64
 }
@@ -27,7 +27,7 @@ func NewOffersProcessor(offersQ history.QOffers, sequence uint32) *OffersProcess
 }
 
 func (p *OffersProcessor) reset() {
-	p.cache = ingest.NewLedgerEntryChangeCache()
+	p.cache = ingest.NewChangeCompactor()
 	p.insertBatch = p.offersQ.NewOffersBatchInsertBuilder(maxBatchSize)
 	p.removeBatch = []int64{}
 }

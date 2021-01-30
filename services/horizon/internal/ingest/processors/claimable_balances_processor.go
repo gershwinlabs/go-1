@@ -9,7 +9,7 @@ import (
 
 type ClaimableBalancesProcessor struct {
 	qClaimableBalances history.QClaimableBalances
-	cache              *ingest.LedgerEntryChangeCache
+	cache              *ingest.ChangeCompactor
 }
 
 func NewClaimableBalancesProcessor(Q history.QClaimableBalances) *ClaimableBalancesProcessor {
@@ -19,7 +19,7 @@ func NewClaimableBalancesProcessor(Q history.QClaimableBalances) *ClaimableBalan
 }
 
 func (p *ClaimableBalancesProcessor) reset() {
-	p.cache = ingest.NewLedgerEntryChangeCache()
+	p.cache = ingest.NewChangeCompactor()
 }
 
 func (p *ClaimableBalancesProcessor) ProcessChange(change ingest.Change) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -79,11 +80,8 @@ func loggerMiddleware(serverMetrics *ServerMetrics) func(next http.Handler) http
 			acceptHeader := r.Header.Get("Accept")
 			streaming := strings.Contains(acceptHeader, render.MimeEventStream)
 
-			logStartOfRequest(ctx, r, streaming)
 			then := time.Now()
-
 			next.ServeHTTP(mw, r.WithContext(ctx))
-
 			duration := time.Since(then)
 			logEndOfRequest(ctx, r, serverMetrics.RequestDurationSummary, duration, mw, streaming)
 		})
@@ -132,34 +130,26 @@ func getClientData(r *http.Request, headerName string) string {
 	return value
 }
 
-func logStartOfRequest(ctx context.Context, r *http.Request, streaming bool) {
-	referer := r.Referer()
-	if referer == "" {
-		referer = "undefined"
-	}
+var routeRegexp = regexp.MustCompile("{([^:}]*):[^}]*}")
 
-	log.Ctx(ctx).WithFields(log.F{
-		"client_name":    getClientData(r, clientNameHeader),
-		"client_version": getClientData(r, clientVersionHeader),
-		"app_name":       getClientData(r, appNameHeader),
-		"app_version":    getClientData(r, appVersionHeader),
-		"forwarded_ip":   firstXForwardedFor(r),
-		"host":           r.Host,
-		"ip":             remoteAddrIP(r),
-		"ip_port":        r.RemoteAddr,
-		"method":         r.Method,
-		"path":           r.URL.String(),
-		"streaming":      streaming,
-		"referer":        referer,
-	}).Info("Starting request")
+// https://prometheus.io/docs/instrumenting/exposition_formats/
+// label_value can be any sequence of UTF-8 characters, but the backslash (\),
+// double-quote ("), and line feed (\n) characters have to be escaped as \\,
+// \", and \n, respectively.
+func sanitizeMetricRoute(routePattern string) string {
+	route := routeRegexp.ReplaceAllString(routePattern, "{$1}")
+	route = strings.ReplaceAll(route, "\\", "\\\\")
+	route = strings.ReplaceAll(route, "\"", "\\\"")
+	route = strings.ReplaceAll(route, "\n", "\\n")
+	return route
 }
 
 func logEndOfRequest(ctx context.Context, r *http.Request, requestDurationSummary *prometheus.SummaryVec, duration time.Duration, mw middleware.WrapResponseWriter, streaming bool) {
-	routePattern := chi.RouteContext(r.Context()).RoutePattern()
+	route := sanitizeMetricRoute(chi.RouteContext(r.Context()).RoutePattern())
 	// Can be empty when request did not reached the final route (ex. blocked by
 	// a middleware). More info: https://github.com/go-chi/chi/issues/270
-	if routePattern == "" {
-		routePattern = "undefined"
+	if route == "" {
+		route = "undefined"
 	}
 
 	referer := r.Referer()
@@ -168,34 +158,30 @@ func logEndOfRequest(ctx context.Context, r *http.Request, requestDurationSummar
 	}
 
 	log.Ctx(ctx).WithFields(log.F{
-		"bytes":          mw.BytesWritten(),
-		"client_name":    getClientData(r, clientNameHeader),
-		"client_version": getClientData(r, clientVersionHeader),
-		"app_name":       getClientData(r, appNameHeader),
-		"app_version":    getClientData(r, appVersionHeader),
-		"duration":       duration.Seconds(),
-		"forwarded_ip":   firstXForwardedFor(r),
-		"host":           r.Host,
-		"ip":             remoteAddrIP(r),
-		"ip_port":        r.RemoteAddr,
-		"method":         r.Method,
-		"path":           r.URL.String(),
-		"route":          routePattern,
-		"status":         mw.Status(),
-		"streaming":      streaming,
-		"referer":        referer,
+		"bytes":           mw.BytesWritten(),
+		"client_name":     getClientData(r, clientNameHeader),
+		"client_version":  getClientData(r, clientVersionHeader),
+		"app_name":        getClientData(r, appNameHeader),
+		"app_version":     getClientData(r, appVersionHeader),
+		"duration":        duration.Seconds(),
+		"x_forwarder_for": r.Header.Get("X-Forwarded-For"),
+		"host":            r.Host,
+		"ip":              remoteAddrIP(r),
+		"ip_port":         r.RemoteAddr,
+		"method":          r.Method,
+		"path":            r.URL.String(),
+		"route":           route,
+		"status":          mw.Status(),
+		"streaming":       streaming,
+		"referer":         referer,
 	}).Info("Finished request")
 
 	requestDurationSummary.With(prometheus.Labels{
 		"status":    strconv.FormatInt(int64(mw.Status()), 10),
-		"route":     routePattern,
+		"route":     route,
 		"streaming": strconv.FormatBool(streaming),
 		"method":    r.Method,
 	}).Observe(float64(duration.Seconds()))
-}
-
-func firstXForwardedFor(r *http.Request) string {
-	return strings.TrimSpace(strings.SplitN(r.Header.Get("X-Forwarded-For"), ",", 2)[0])
 }
 
 // recoverMiddleware helps the server recover from panics. It ensures that
@@ -261,17 +247,17 @@ type StateMiddleware struct {
 }
 
 func ingestionStatus(q *history.Q) (uint32, bool, error) {
-	version, err := q.GetExpIngestVersion()
+	version, err := q.GetIngestVersion()
 	if err != nil {
 		return 0, false, supportErrors.Wrap(
-			err, "Error running GetExpIngestVersion",
+			err, "Error running GetIngestVersion",
 		)
 	}
 
-	lastIngestedLedger, err := q.GetLastLedgerExpIngestNonBlocking()
+	lastIngestedLedger, err := q.GetLastLedgerIngestNonBlocking()
 	if err != nil {
 		return 0, false, supportErrors.Wrap(
-			err, "Error running GetLastLedgerExpIngestNonBlocking",
+			err, "Error running GetLastLedgerIngestNonBlocking",
 		)
 	}
 
@@ -306,7 +292,7 @@ func (m *StateMiddleware) WrapFunc(h http.HandlerFunc) http.HandlerFunc {
 			ReadOnly:  true,
 		})
 		if err != nil {
-			err = supportErrors.Wrap(err, "Error starting exp ingestion read transaction")
+			err = supportErrors.Wrap(err, "Error starting ingestion read transaction")
 			problem.Render(r.Context(), w, err)
 			return
 		}

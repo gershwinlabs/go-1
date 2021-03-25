@@ -5,6 +5,7 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/stellar/go/historyarchive"
 	"github.com/stellar/go/ingest"
 	"github.com/stellar/go/ingest/ledgerbackend"
+	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/services/horizon/internal/db2"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/services/horizon/internal/ingest/processors"
@@ -111,9 +113,9 @@ func (s *VerifyRangeStateTestSuite) TestBeginReturnsError() {
 	)
 }
 
-func (s *VerifyRangeStateTestSuite) TestGetLastLedgerExpIngestReturnsError() {
+func (s *VerifyRangeStateTestSuite) TestGetLastLedgerIngestReturnsError() {
 	s.historyQ.On("Begin").Return(nil).Once()
-	s.historyQ.On("GetLastLedgerExpIngest").Return(uint32(0), errors.New("my error")).Once()
+	s.historyQ.On("GetLastLedgerIngest").Return(uint32(0), errors.New("my error")).Once()
 
 	next, err := verifyRangeState{fromLedger: 100, toLedger: 200}.run(s.system)
 	s.Assert().Error(err)
@@ -124,9 +126,9 @@ func (s *VerifyRangeStateTestSuite) TestGetLastLedgerExpIngestReturnsError() {
 	)
 }
 
-func (s *VerifyRangeStateTestSuite) TestGetLastLedgerExpIngestNonEmpty() {
+func (s *VerifyRangeStateTestSuite) TestGetLastLedgerIngestNonEmpty() {
 	s.historyQ.On("Begin").Return(nil).Once()
-	s.historyQ.On("GetLastLedgerExpIngest").Return(uint32(100), nil).Once()
+	s.historyQ.On("GetLastLedgerIngest").Return(uint32(100), nil).Once()
 
 	next, err := verifyRangeState{fromLedger: 100, toLedger: 200}.run(s.system)
 	s.Assert().Error(err)
@@ -139,7 +141,7 @@ func (s *VerifyRangeStateTestSuite) TestGetLastLedgerExpIngestNonEmpty() {
 
 func (s *VerifyRangeStateTestSuite) TestRunHistoryArchiveIngestionReturnsError() {
 	s.historyQ.On("Begin").Return(nil).Once()
-	s.historyQ.On("GetLastLedgerExpIngest").Return(uint32(0), nil).Once()
+	s.historyQ.On("GetLastLedgerIngest").Return(uint32(0), nil).Once()
 	s.ledgerBackend.On("PrepareRange", ledgerbackend.BoundedRange(100, 200)).Return(nil).Once()
 
 	s.runner.On("RunHistoryArchiveIngestion", uint32(100)).Return(ingest.StatsChangeProcessorResults{}, errors.New("my error")).Once()
@@ -155,10 +157,10 @@ func (s *VerifyRangeStateTestSuite) TestRunHistoryArchiveIngestionReturnsError()
 
 func (s *VerifyRangeStateTestSuite) TestSuccess() {
 	s.historyQ.On("Begin").Return(nil).Once()
-	s.historyQ.On("GetLastLedgerExpIngest").Return(uint32(0), nil).Once()
+	s.historyQ.On("GetLastLedgerIngest").Return(uint32(0), nil).Once()
 	s.ledgerBackend.On("PrepareRange", ledgerbackend.BoundedRange(100, 200)).Return(nil).Once()
 	s.runner.On("RunHistoryArchiveIngestion", uint32(100)).Return(ingest.StatsChangeProcessorResults{}, nil).Once()
-	s.historyQ.On("UpdateLastLedgerExpIngest", uint32(100)).Return(nil).Once()
+	s.historyQ.On("UpdateLastLedgerIngest", uint32(100)).Return(nil).Once()
 	s.historyQ.On("Commit").Return(nil).Once()
 
 	for i := uint32(101); i <= 200; i++ {
@@ -170,7 +172,7 @@ func (s *VerifyRangeStateTestSuite) TestSuccess() {
 			processorsRunDurations{},
 			nil,
 		).Once()
-		s.historyQ.On("UpdateLastLedgerExpIngest", i).Return(nil).Once()
+		s.historyQ.On("UpdateLastLedgerIngest", i).Return(nil).Once()
 		s.historyQ.On("Commit").Return(nil).Once()
 	}
 
@@ -184,10 +186,10 @@ func (s *VerifyRangeStateTestSuite) TestSuccess() {
 
 func (s *VerifyRangeStateTestSuite) TestSuccessWithVerify() {
 	s.historyQ.On("Begin").Return(nil).Once()
-	s.historyQ.On("GetLastLedgerExpIngest").Return(uint32(0), nil).Once()
+	s.historyQ.On("GetLastLedgerIngest").Return(uint32(0), nil).Once()
 	s.ledgerBackend.On("PrepareRange", ledgerbackend.BoundedRange(100, 110)).Return(nil).Once()
 	s.runner.On("RunHistoryArchiveIngestion", uint32(100)).Return(ingest.StatsChangeProcessorResults{}, nil).Once()
-	s.historyQ.On("UpdateLastLedgerExpIngest", uint32(100)).Return(nil).Once()
+	s.historyQ.On("UpdateLastLedgerIngest", uint32(100)).Return(nil).Once()
 	s.historyQ.On("Commit").Return(nil).Once()
 
 	for i := uint32(101); i <= 110; i++ {
@@ -199,7 +201,7 @@ func (s *VerifyRangeStateTestSuite) TestSuccessWithVerify() {
 			processorsRunDurations{},
 			nil,
 		).Once()
-		s.historyQ.On("UpdateLastLedgerExpIngest", i).Return(nil).Once()
+		s.historyQ.On("UpdateLastLedgerIngest", i).Return(nil).Once()
 		s.historyQ.On("Commit").Return(nil).Once()
 	}
 
@@ -212,7 +214,7 @@ func (s *VerifyRangeStateTestSuite) TestSuccessWithVerify() {
 		s.Assert().True(arg.ReadOnly)
 	}).Return(nil).Once()
 	clonedQ.On("Rollback").Return(nil).Once()
-	clonedQ.On("GetLastLedgerExpIngestNonBlocking").Return(uint32(63), nil).Once()
+	clonedQ.On("GetLastLedgerIngestNonBlocking").Return(uint32(63), nil).Once()
 	mockChangeReader := &ingest.MockChangeReader{}
 	mockChangeReader.On("Close").Return(nil).Once()
 	mockAccountID := "GACMZD5VJXTRLKVET72CETCYKELPNCOTTBDC6DHFEUPLG5DHEK534JQX"
@@ -312,6 +314,7 @@ func (s *VerifyRangeStateTestSuite) TestSuccessWithVerify() {
 			},
 		},
 		Sponsor: null.StringFrom("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
+		Flags:   uint32(xdr.ClaimableBalanceFlagsClaimableBalanceClawbackEnabledFlag),
 	}
 	claimableBalanceChange := ingest.Change{
 		Type: xdr.LedgerEntryTypeClaimableBalance,
@@ -332,6 +335,12 @@ func (s *VerifyRangeStateTestSuite) TestSuccessWithVerify() {
 					},
 					Asset:  claimableBalance.Asset,
 					Amount: claimableBalance.Amount,
+					Ext: xdr.ClaimableBalanceEntryExt{
+						V: 1,
+						V1: &xdr.ClaimableBalanceEntryExtensionV1{
+							Flags: xdr.Uint32(xdr.ClaimableBalanceFlagsClaimableBalanceClawbackEnabledFlag),
+						},
+					},
 				},
 			},
 			LastModifiedLedgerSeq: xdr.Uint32(62),
@@ -425,4 +434,48 @@ func (s *VerifyRangeStateTestSuite) TestSuccessWithVerify() {
 		next,
 	)
 	clonedQ.AssertExpectations(s.T())
+}
+
+func (s *VerifyRangeStateTestSuite) TestVerifyFailsWhenAssetStatsMismatch() {
+	set := processors.AssetStatSet{}
+
+	trustLineIssuer := xdr.MustAddress("GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H")
+	set.Add(xdr.TrustLineEntry{
+		AccountId: xdr.MustAddress(keypair.MustRandom().Address()),
+		Balance:   123,
+		Asset:     xdr.MustNewCreditAsset("EUR", trustLineIssuer.Address()),
+		Flags:     xdr.Uint32(xdr.TrustLineFlagsAuthorizedToMaintainLiabilitiesFlag),
+	})
+
+	stat := history.ExpAssetStat{
+		AssetType:   xdr.AssetTypeAssetTypeCreditAlphanum4,
+		AssetCode:   "EUR",
+		AssetIssuer: trustLineIssuer.Address(),
+		Accounts: history.ExpAssetStatAccounts{
+			Unauthorized: 1,
+		},
+		Balances: history.ExpAssetStatBalances{
+			Authorized:                      "0",
+			AuthorizedToMaintainLiabilities: "0",
+			Unauthorized:                    "123",
+		},
+		Amount:      "0",
+		NumAccounts: 0,
+	}
+
+	s.historyQ.MockQAssetStats.On("GetAssetStats", "", "", db2.PageQuery{
+		Order: "asc",
+		Limit: assetStatsBatchSize,
+	}).Return([]history.ExpAssetStat{stat}, nil).Once()
+	s.historyQ.MockQAssetStats.On("GetAssetStats", "", "", db2.PageQuery{
+		Cursor: stat.PagingToken(),
+		Order:  "asc",
+		Limit:  assetStatsBatchSize,
+	}).Return([]history.ExpAssetStat{}, nil).Once()
+
+	err := checkAssetStats(set, s.historyQ)
+	s.Assert().EqualError(err, fmt.Sprintf("db asset stat with code EUR issuer %s does not match asset stat from HAS", trustLineIssuer.Address()))
+
+	// Satisfy the mock
+	s.historyQ.Rollback()
 }

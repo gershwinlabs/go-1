@@ -27,7 +27,7 @@ func TestProtocol15Basics(t *testing.T) {
 	t.Run("Sanity", func(t *testing.T) {
 		root, err := itest.Client().Root()
 		tt.NoError(err)
-		tt.Equal(int32(15), root.CoreSupportedProtocolVersion)
+		tt.LessOrEqual(int32(15), root.CoreSupportedProtocolVersion)
 		tt.Equal(int32(15), root.CurrentProtocolVersion)
 
 		// Submit a simple tx
@@ -159,6 +159,21 @@ func TestHappyClaimableBalances(t *testing.T) {
 			assert.Len(t, balances.Embedded.Records, 0)
 		}
 
+		// check that its operations and transactions can be obtained
+		transactionsResp, err := client.Transactions(sdk.TransactionRequest{
+			ForClaimableBalance: claim.BalanceID,
+		})
+		assert.NoError(t, err)
+		assert.Len(t, transactionsResp.Embedded.Records, 1)
+
+		operationsResp, err := client.Operations(sdk.OperationRequest{
+			ForClaimableBalance: claim.BalanceID,
+		})
+		assert.NoError(t, err)
+		if assert.Len(t, operationsResp.Embedded.Records, 1) {
+			assert.IsType(t, operationsResp.Embedded.Records[0], operations.CreateClaimableBalance{})
+		}
+
 		//
 		// Now, actually try to *claim* the CB to remove it from the global list.
 		//
@@ -177,11 +192,27 @@ func TestHappyClaimableBalances(t *testing.T) {
 		assert.NoError(t, err)
 		t.Log("  claimed")
 
-		// Ensure the claimable balance is gone now.
+		// Ensure the claimable balance is gone now ...
 		balances, err = client.ClaimableBalances(sdk.ClaimableBalanceRequest{Sponsor: a.Address()})
 		assert.NoError(t, err)
 		assert.Len(t, balances.Embedded.Records, 0)
 		t.Log("  gone")
+
+		// ... but that its operations and transactions can still be obtained
+		transactionsResp, err = client.Transactions(sdk.TransactionRequest{
+			ForClaimableBalance: claim.BalanceID,
+		})
+		assert.NoError(t, err)
+		assert.Len(t, transactionsResp.Embedded.Records, 2)
+
+		operationsResp, err = client.Operations(sdk.OperationRequest{
+			ForClaimableBalance: claim.BalanceID,
+		})
+		assert.NoError(t, err)
+		if assert.Len(t, operationsResp.Embedded.Records, 2) {
+			assert.IsType(t, operationsResp.Embedded.Records[0], operations.CreateClaimableBalance{})
+			assert.IsType(t, operationsResp.Embedded.Records[1], operations.ClaimClaimableBalance{})
+		}
 
 		// Ensure the actual account has a higher balance, now!
 		request := sdk.AccountRequest{AccountID: b.Address()}
@@ -381,7 +412,7 @@ func TestClaimableBalancePredicates(t *testing.T) {
 			t.Logf("  amount: %d, predicate: %+v", amount, predicate.Type)
 
 			createClaimOps[i] = &txnbuild.CreateClaimableBalance{
-				SourceAccount: accountA,
+				SourceAccount: accountA.GetAccountID(),
 				Destinations:  []txnbuild.Claimant{claimant},
 				Amount:        fmt.Sprintf("%d.0000000", amount),
 				Asset:         txnbuild.NativeAsset{},

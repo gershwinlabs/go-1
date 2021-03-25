@@ -38,6 +38,7 @@ type coreSettingsStore struct {
 func (c *coreSettingsStore) set(resp *proto.InfoResponse) {
 	c.Lock()
 	defer c.Unlock()
+	c.Synced = resp.IsSynced()
 	c.CoreVersion = resp.Info.Build
 	c.CurrentProtocolVersion = int32(resp.Info.Ledger.Version)
 	c.CoreSupportedProtocolVersion = int32(resp.Info.ProtocolVersion)
@@ -80,6 +81,7 @@ type App struct {
 	dbWaitCountCounter                prometheus.CounterFunc
 	dbWaitDurationCounter             prometheus.CounterFunc
 	coreLatestLedgerCounter           prometheus.CounterFunc
+	coreSynced                        prometheus.GaugeFunc
 }
 
 func (a *App) GetCoreSettings() actions.CoreSettings {
@@ -231,7 +233,7 @@ func (a *App) UpdateLedgerState() {
 		return
 	}
 
-	next.ExpHistoryLatest, err = a.HistoryQ().GetLastLedgerExpIngestNonBlocking()
+	next.ExpHistoryLatest, err = a.HistoryQ().GetLastLedgerIngestNonBlocking()
 	if err != nil {
 		logErr(err, "failed to load the oldest known exp ledger state from history DB")
 		return
@@ -442,7 +444,7 @@ func (a *App) init() error {
 
 	if a.config.Ingest {
 		// ingester
-		initExpIngester(a)
+		initIngester(a)
 	}
 	initPathFinder(a)
 
@@ -474,19 +476,30 @@ func (a *App) init() error {
 	initTxSubMetrics(a)
 
 	routerConfig := httpx.RouterConfig{
-		DBSession:          a.historyQ.Session,
-		TxSubmitter:        a.submitter,
-		RateQuota:          a.config.RateQuota,
-		SSEUpdateFrequency: a.config.SSEUpdateFrequency,
-		StaleThreshold:     a.config.StaleThreshold,
-		ConnectionTimeout:  a.config.ConnectionTimeout,
-		NetworkPassphrase:  a.config.NetworkPassphrase,
-		MaxPathLength:      a.config.MaxPathLength,
-		PathFinder:         a.paths,
-		PrometheusRegistry: a.prometheusRegistry,
-		CoreGetter:         a,
-		HorizonVersion:     a.horizonVersion,
-		FriendbotURL:       a.config.FriendbotURL,
+		DBSession:             a.historyQ.Session,
+		TxSubmitter:           a.submitter,
+		RateQuota:             a.config.RateQuota,
+		BehindCloudflare:      a.config.BehindCloudflare,
+		BehindAWSLoadBalancer: a.config.BehindAWSLoadBalancer,
+		SSEUpdateFrequency:    a.config.SSEUpdateFrequency,
+		StaleThreshold:        a.config.StaleThreshold,
+		ConnectionTimeout:     a.config.ConnectionTimeout,
+		NetworkPassphrase:     a.config.NetworkPassphrase,
+		MaxPathLength:         a.config.MaxPathLength,
+		PathFinder:            a.paths,
+		PrometheusRegistry:    a.prometheusRegistry,
+		CoreGetter:            a,
+		HorizonVersion:        a.horizonVersion,
+		FriendbotURL:          a.config.FriendbotURL,
+		HealthCheck: healthCheck{
+			session: a.historyQ.Session,
+			ctx:     a.ctx,
+			core: &stellarcore.Client{
+				HTTP: &http.Client{Timeout: infoRequestTimeout},
+				URL:  a.config.StellarCoreURL,
+			},
+			cache: newHealthCache(healthCacheTTL),
+		},
 	}
 
 	var err error

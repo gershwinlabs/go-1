@@ -4,6 +4,8 @@ package history
 
 import (
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -73,17 +75,24 @@ const (
 	// EffectTrustlineUpdated occurs when an account changes a trustline's limit
 	EffectTrustlineUpdated EffectType = 22 // from change_trust, allow_trust
 
+	// Deprecated: use EffectTrustlineFlagsUpdated instead.
 	// EffectTrustlineAuthorized occurs when an anchor has AUTH_REQUIRED flag set
 	// to true and it authorizes another account's trustline
 	EffectTrustlineAuthorized EffectType = 23 // from allow_trust
 
+	// Deprecated: use EffectTrustlineFlagsUpdated instead.
 	// EffectTrustlineDeauthorized occurs when an anchor revokes access to a asset
 	// it issues.
 	EffectTrustlineDeauthorized EffectType = 24 // from allow_trust
 
+	// Deprecated: use EffectTrustlineFlagsUpdated instead.
 	// EffectTrustlineAuthorizedToMaintainLiabilities occurs when an anchor has AUTH_REQUIRED flag set
 	// to true and it authorizes another account's trustline to maintain liabilities
 	EffectTrustlineAuthorizedToMaintainLiabilities EffectType = 25 // from allow_trust
+
+	// EffectTrustlineFlagsUpdated effects occur when a TrustLine changes its
+	// flags, either clearing or setting.
+	EffectTrustlineFlagsUpdated EffectType = 26 // from set_trust_line flags
 
 	// trading effects
 
@@ -91,7 +100,7 @@ const (
 	EffectOfferCreated EffectType = 30 // from manage_offer, creat_passive_offer
 
 	// EffectOfferRemoved occurs when an account removes an offer
-	EffectOfferRemoved EffectType = 31 // from manage_offer, creat_passive_offer, path_payment
+	EffectOfferRemoved EffectType = 31 // from manage_offer, create_passive_offer, path_payment
 
 	// EffectOfferUpdated occurs when an offer is updated by the offering account.
 	EffectOfferUpdated EffectType = 32 // from manage_offer, creat_passive_offer, path_payment
@@ -173,6 +182,9 @@ const (
 
 	// EffectSignerSponsorshipRemoved occurs when the sponsorship of a signer is removed
 	EffectSignerSponsorshipRemoved EffectType = 74 // from revoke_sponsorship
+
+	// EffectClaimableBalanceClawedBack occurs when a claimable balance is clawed back
+	EffectClaimableBalanceClawedBack EffectType = 80 // from clawback_claimable_balance
 )
 
 // Account is a row of data from the `history_accounts` table
@@ -211,6 +223,7 @@ type IngestionQ interface {
 	QAccounts
 	QAssetStats
 	QClaimableBalances
+	QHistoryClaimableBalances
 	QData
 	QEffects
 	QLedgers
@@ -234,13 +247,13 @@ type IngestionQ interface {
 	CloneIngestionQ() IngestionQ
 	Rollback() error
 	GetTx() *sqlx.Tx
-	GetExpIngestVersion() (int, error)
+	GetIngestVersion() (int, error)
 	UpdateExpStateInvalid(bool) error
-	UpdateExpIngestVersion(int) error
+	UpdateIngestVersion(int) error
 	GetExpStateInvalid() (bool, error)
 	GetLatestLedger() (uint32, error)
 	GetOfferCompactionSequence() (uint32, error)
-	TruncateExpingestStateTables() error
+	TruncateIngestStateTables() error
 	DeleteRangeAll(start, end int64) error
 }
 
@@ -311,11 +324,13 @@ type Asset struct {
 
 // ExpAssetStat is a row in the exp_asset_stats table representing the stats per Asset
 type ExpAssetStat struct {
-	AssetType   xdr.AssetType `db:"asset_type"`
-	AssetCode   string        `db:"asset_code"`
-	AssetIssuer string        `db:"asset_issuer"`
-	Amount      string        `db:"amount"`
-	NumAccounts int32         `db:"num_accounts"`
+	AssetType   xdr.AssetType        `db:"asset_type"`
+	AssetCode   string               `db:"asset_code"`
+	AssetIssuer string               `db:"asset_issuer"`
+	Accounts    ExpAssetStatAccounts `db:"accounts"`
+	Balances    ExpAssetStatBalances `db:"balances"`
+	Amount      string               `db:"amount"`
+	NumAccounts int32                `db:"num_accounts"`
 }
 
 // PagingToken returns a cursor for this asset stat
@@ -326,6 +341,58 @@ func (e ExpAssetStat) PagingToken() string {
 		e.AssetIssuer,
 		xdr.AssetTypeToString[e.AssetType],
 	)
+}
+
+// ExpAssetStatAccounts represents the summarized acount numbers for a single Asset
+type ExpAssetStatAccounts struct {
+	Authorized                      int32 `json:"authorized"`
+	AuthorizedToMaintainLiabilities int32 `json:"authorized_to_maintain_liabilities"`
+	Unauthorized                    int32 `json:"unauthorized"`
+}
+
+func (e ExpAssetStatAccounts) Value() (driver.Value, error) {
+	return json.Marshal(e)
+}
+
+func (e *ExpAssetStatAccounts) Scan(src interface{}) error {
+	source, ok := src.([]byte)
+	if !ok {
+		return errors.New("Type assertion .([]byte) failed.")
+	}
+
+	return json.Unmarshal(source, &e)
+}
+
+func (a ExpAssetStatAccounts) Add(b ExpAssetStatAccounts) ExpAssetStatAccounts {
+	return ExpAssetStatAccounts{
+		Authorized:                      a.Authorized + b.Authorized,
+		AuthorizedToMaintainLiabilities: a.AuthorizedToMaintainLiabilities + b.AuthorizedToMaintainLiabilities,
+		Unauthorized:                    a.Unauthorized + b.Unauthorized,
+	}
+}
+
+func (a ExpAssetStatAccounts) IsZero() bool {
+	return a.Authorized == 0 && a.AuthorizedToMaintainLiabilities == 0 && a.Unauthorized == 0
+}
+
+// ExpAssetStatBalances represents the summarized balances for a single Asset
+type ExpAssetStatBalances struct {
+	Authorized                      string `json:"authorized"`
+	AuthorizedToMaintainLiabilities string `json:"authorized_to_maintain_liabilities"`
+	Unauthorized                    string `json:"unauthorized"`
+}
+
+func (e ExpAssetStatBalances) Value() (driver.Value, error) {
+	return json.Marshal(e)
+}
+
+func (e *ExpAssetStatBalances) Scan(src interface{}) error {
+	source, ok := src.([]byte)
+	if !ok {
+		return errors.New("Type assertion .([]byte) failed.")
+	}
+
+	return json.Unmarshal(source, &e)
 }
 
 // QAssetStats defines exp_asset_stats related queries.
@@ -538,9 +605,9 @@ type Q struct {
 
 // QSigners defines signer related queries.
 type QSigners interface {
-	GetLastLedgerExpIngestNonBlocking() (uint32, error)
-	GetLastLedgerExpIngest() (uint32, error)
-	UpdateLastLedgerExpIngest(ledgerSequence uint32) error
+	GetLastLedgerIngestNonBlocking() (uint32, error)
+	GetLastLedgerIngest() (uint32, error)
+	UpdateLastLedgerIngest(ledgerSequence uint32) error
 	AccountsForSigner(signer string, page db2.PageQuery) ([]AccountSigner, error)
 	NewAccountSignersBatchInsertBuilder(maxBatchSize int) AccountSignersBatchInsertBuilder
 	CreateAccountSigner(account, signer string, weight int32, sponsor *string) (int64, error)

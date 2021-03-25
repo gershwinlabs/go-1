@@ -13,7 +13,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
-	"github.com/sebest/xff"
 	"github.com/stellar/throttled"
 
 	"github.com/stellar/go/services/horizon/internal/actions"
@@ -22,6 +21,7 @@ import (
 	"github.com/stellar/go/services/horizon/internal/render/sse"
 	"github.com/stellar/go/services/horizon/internal/txsub"
 	"github.com/stellar/go/support/db"
+	supporthttp "github.com/stellar/go/support/http"
 	"github.com/stellar/go/support/render/problem"
 )
 
@@ -32,16 +32,19 @@ type RouterConfig struct {
 	TxSubmitter *txsub.System
 	RateQuota   *throttled.RateQuota
 
-	SSEUpdateFrequency time.Duration
-	StaleThreshold     uint
-	ConnectionTimeout  time.Duration
-	NetworkPassphrase  string
-	MaxPathLength      uint
-	PathFinder         paths.Finder
-	PrometheusRegistry *prometheus.Registry
-	CoreGetter         actions.CoreSettingsGetter
-	HorizonVersion     string
-	FriendbotURL       *url.URL
+	BehindCloudflare      bool
+	BehindAWSLoadBalancer bool
+	SSEUpdateFrequency    time.Duration
+	StaleThreshold        uint
+	ConnectionTimeout     time.Duration
+	NetworkPassphrase     string
+	MaxPathLength         uint
+	PathFinder            paths.Finder
+	PrometheusRegistry    *prometheus.Registry
+	CoreGetter            actions.CoreSettingsGetter
+	HorizonVersion        string
+	FriendbotURL          *url.URL
+	HealthCheck           http.Handler
 }
 
 type Router struct {
@@ -76,7 +79,10 @@ func (r *Router) addMiddleware(config *RouterConfig,
 	r.Use(requestCacheHeadersMiddleware)
 	r.Use(chimiddleware.RequestID)
 	r.Use(contextMiddleware)
-	r.Use(xff.Handler)
+	r.Use(supporthttp.XFFMiddleware(supporthttp.XFFMiddlewareConfig{
+		BehindCloudflare:      config.BehindCloudflare,
+		BehindAWSLoadBalancer: config.BehindAWSLoadBalancer,
+	}))
 	r.Use(loggerMiddleware(serverMetrics))
 	r.Use(timeoutMiddleware(config.ConnectionTimeout))
 	r.Use(recoverMiddleware)
@@ -104,6 +110,8 @@ func (r *Router) addRoutes(config *RouterConfig, rateLimiter *throttled.HTTPRate
 		HorizonSession: config.DBSession,
 	}
 
+	r.Method(http.MethodGet, "/health", config.HealthCheck)
+
 	r.Method(http.MethodGet, "/", ObjectActionHandler{Action: actions.GetRootHandler{
 		LedgerState:        ledgerState,
 		CoreSettingsGetter: config.CoreGetter,
@@ -118,7 +126,6 @@ func (r *Router) addRoutes(config *RouterConfig, rateLimiter *throttled.HTTPRate
 	}
 
 	historyMiddleware := NewHistoryMiddleware(ledgerState, int32(config.StaleThreshold), config.DBSession)
-
 	// State endpoints behind stateMiddleware
 	r.Group(func(r chi.Router) {
 		r.Use(stateMiddleware.Wrap)
@@ -219,6 +226,15 @@ func (r *Router) addRoutes(config *RouterConfig, rateLimiter *throttled.HTTPRate
 				}, streamHandler))
 			})
 		})
+	})
+	// claimable balance actions
+	r.Group(func(r chi.Router) {
+		r.Use(historyMiddleware)
+		r.Method(http.MethodGet, "/claimable_balances/{claimable_balance_id:\\w+}/operations", streamableHistoryPageHandler(ledgerState, actions.GetOperationsHandler{
+			LedgerState:  ledgerState,
+			OnlyPayments: false,
+		}, streamHandler))
+		r.Method(http.MethodGet, "/claimable_balances/{claimable_balance_id:\\w+}/transactions", streamableHistoryPageHandler(ledgerState, actions.GetTransactionsHandler{LedgerState: ledgerState}, streamHandler))
 	})
 
 	// transaction history actions

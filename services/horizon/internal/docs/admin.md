@@ -34,7 +34,7 @@ To test the installation, simply run `horizon --help` from a terminal.  If the h
 Should you decide not to use one of our prebuilt releases, you may instead build Horizon from source.  To do so, you need to install some developer tools:
 
 - A unix-like operating system with the common core commands (cp, tar, mkdir, bash, etc.)
-- A compatible distribution of Go (Go 1.14 or later)
+- A compatible distribution of Go (this repository is officially supported on the last two releases of Go)
 - [git](https://git-scm.com/)
 - [mercurial](https://www.mercurial-scm.org/)
 
@@ -216,30 +216,11 @@ Metrics are collected while a Horizon process is running and they are exposed at
 
 Below we present a few standard log entries with associated fields. You can use them to build metrics and alerts. We present below some examples. Please note that this represents Horizon app metrics only. You should also monitor your hardware metrics like CPU or RAM Utilization.
 
-### Starting HTTP request
-
-| Key              | Value                                                                                          |
-|------------------|------------------------------------------------------------------------------------------------|
-| **`msg`**        | **`Starting request`**                                                                         |
-| `client_name`    | Value of `X-Client-Name` HTTP header representing client name                                  |
-| `client_version` | Value of `X-Client-Version` HTTP header representing client version                            |
-| `app_name`       | Value of `X-App-Name` HTTP header representing app name                                        |
-| `app_version`    | Value of `X-App-Version` HTTP header representing app version                                  |
-| `forwarded_ip`   | First value of `X-Forwarded-For` header                                                        |
-| `host`           | Value of `Host` header                                                                         |
-| `ip`             | IP of a client sending HTTP request                                                            |
-| `ip_port`        | IP and port of a client sending HTTP request                                                   |
-| `method`         | HTTP method (`GET`, `POST`, ...)                                                               |
-| `path`           | Full request path, including query string (ex. `/transactions?order=desc`)                     |
-| `streaming`      | Boolean, `true` if request is a streaming request                                              |
-| `referer`        | Value of `Referer` header                                                                      |
-| `req`            | Random value that uniquely identifies a request, attached to all logs within this HTTP request |
-
 ### Finished HTTP request
 
 | Key              | Value                                                                                          |
 |------------------|------------------------------------------------------------------------------------------------|
-| **`msg`**        | **`Finished request`**                                                                         |
+| **`msg`**        | **`HTTP request`**                                                                             |
 | `bytes`          | Number of response bytes sent                                                                  |
 | `client_name`    | Value of `X-Client-Name` HTTP header representing client name                                  |
 | `client_version` | Value of `X-Client-Version` HTTP header representing client version                            |

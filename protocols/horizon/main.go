@@ -142,9 +142,10 @@ func (a *Account) SignerSummary() map[string]int32 {
 
 // AccountFlags represents the state of an account's flags
 type AccountFlags struct {
-	AuthRequired  bool `json:"auth_required"`
-	AuthRevocable bool `json:"auth_revocable"`
-	AuthImmutable bool `json:"auth_immutable"`
+	AuthRequired        bool `json:"auth_required"`
+	AuthRevocable       bool `json:"auth_revocable"`
+	AuthImmutable       bool `json:"auth_immutable"`
+	AuthClawbackEnabled bool `json:"auth_clawback_enabled"`
 }
 
 // AccountThresholds represents an accounts "thresholds", the numerical values
@@ -165,8 +166,12 @@ type AssetStat struct {
 	} `json:"_links"`
 
 	base.Asset
-	PT          string       `json:"paging_token"`
-	Amount      string       `json:"amount"`
+	PT       string            `json:"paging_token"`
+	Accounts AssetStatAccounts `json:"accounts"`
+	// Action needed in release: horizon-v3.0.0: deprecated field
+	Amount   string            `json:"amount"`
+	Balances AssetStatBalances `json:"balances"`
+	// Action needed in release: horizon-v3.0.0: deprecated field
 	NumAccounts int32        `json:"num_accounts"`
 	Flags       AccountFlags `json:"flags"`
 }
@@ -174,6 +179,20 @@ type AssetStat struct {
 // PagingToken implementation for hal.Pageable
 func (res AssetStat) PagingToken() string {
 	return res.PT
+}
+
+// AssetStatBalances represents the summarized balances for a single Asset
+type AssetStatBalances struct {
+	Authorized                      string `json:"authorized"`
+	AuthorizedToMaintainLiabilities string `json:"authorized_to_maintain_liabilities"`
+	Unauthorized                    string `json:"unauthorized"`
+}
+
+// AssetStatAccounts represents the summarized acount numbers for a single Asset
+type AssetStatAccounts struct {
+	Authorized                      int32 `json:"authorized"`
+	AuthorizedToMaintainLiabilities int32 `json:"authorized_to_maintain_liabilities"`
+	Unauthorized                    int32 `json:"unauthorized"`
 }
 
 // Balance represents an account's holdings for a single currency type
@@ -186,6 +205,7 @@ type Balance struct {
 	LastModifiedLedger                uint32 `json:"last_modified_ledger,omitempty"`
 	IsAuthorized                      *bool  `json:"is_authorized,omitempty"`
 	IsAuthorizedToMaintainLiabilities *bool  `json:"is_authorized_to_maintain_liabilities,omitempty"`
+	IsClawbackEnabled                 *bool  `json:"is_clawback_enabled,omitempty"`
 	base.Asset
 }
 
@@ -656,20 +676,28 @@ type PathsPage struct {
 	} `json:"_embedded"`
 }
 
+// ClaimableBalanceFlags represents the state of a claimable balance's flags
+type ClaimableBalanceFlags struct {
+	ClawbackEnabled bool `json:"clawback_enabled"`
+}
+
 // ClaimableBalance represents a claimable balance
 type ClaimableBalance struct {
 	Links struct {
-		Self hal.Link `json:"self"`
+		Self         hal.Link `json:"self"`
+		Transactions hal.Link `json:"transactions"`
+		Operations   hal.Link `json:"operations"`
 	} `json:"_links"`
 
-	BalanceID          string     `json:"id"`
-	Asset              string     `json:"asset"`
-	Amount             string     `json:"amount"`
-	Sponsor            string     `json:"sponsor,omitempty"`
-	LastModifiedLedger uint32     `json:"last_modified_ledger"`
-	LastModifiedTime   *time.Time `json:"last_modified_time"`
-	Claimants          []Claimant `json:"claimants"`
-	PT                 string     `json:"paging_token"`
+	BalanceID          string                `json:"id"`
+	Asset              string                `json:"asset"`
+	Amount             string                `json:"amount"`
+	Sponsor            string                `json:"sponsor,omitempty"`
+	LastModifiedLedger uint32                `json:"last_modified_ledger"`
+	LastModifiedTime   *time.Time            `json:"last_modified_time"`
+	Claimants          []Claimant            `json:"claimants"`
+	Flags              ClaimableBalanceFlags `json:"flags"`
+	PT                 string                `json:"paging_token"`
 }
 
 type ClaimableBalances struct {

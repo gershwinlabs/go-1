@@ -103,6 +103,7 @@ func newSignedFeeBumpTransaction(
 }
 
 func convertToV0(tx *Transaction) {
+	signatures := tx.Signatures()
 	tx.envelope.V0 = &xdr.TransactionV0Envelope{
 		Tx: xdr.TransactionV0{
 			SourceAccountEd25519: *tx.envelope.SourceAccount().Ed25519,
@@ -112,6 +113,7 @@ func convertToV0(tx *Transaction) {
 			Memo:                 tx.envelope.Memo(),
 			Operations:           tx.envelope.Operations(),
 		},
+		Signatures: signatures,
 	}
 	tx.envelope.V1 = nil
 	tx.envelope.Type = xdr.EnvelopeTypeEnvelopeTypeTxV0
@@ -206,19 +208,19 @@ func TestValidateAmountInvalidValue(t *testing.T) {
 }
 
 func TestValidateAllowTrustAsset(t *testing.T) {
-	err := validateAllowTrustAsset(nil)
+	err := validateAssetCode(nil)
 	assert.Error(t, err)
 	expectedErrMsg := "asset is undefined"
 	require.EqualError(t, err, expectedErrMsg, "An asset is required")
 
-	err = validateAllowTrustAsset(NativeAsset{})
+	err = validateAssetCode(NativeAsset{})
 	assert.Error(t, err)
 	expectedErrMsg = "native (XLM) asset type is not allowed"
 	require.EqualError(t, err, expectedErrMsg, "An asset is required")
 
 	// allow trust asset does not require asset issuer
 	atAsset := CreditAsset{Code: "ABCD"}
-	err = validateAllowTrustAsset(atAsset)
+	err = validateAssetCode(atAsset)
 	assert.NoError(t, err)
 }
 

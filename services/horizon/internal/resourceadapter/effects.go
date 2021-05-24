@@ -29,33 +29,39 @@ var EffectTypeNames = map[history.EffectType]string{
 	history.EffectTrustlineAuthorizedToMaintainLiabilities: "trustline_authorized_to_maintain_liabilities",
 	history.EffectTrustlineDeauthorized:                    "trustline_deauthorized",
 	history.EffectTrustlineFlagsUpdated:                    "trustline_flags_updated",
-	history.EffectOfferCreated:                             "offer_created",
-	history.EffectOfferRemoved:                             "offer_removed",
-	history.EffectOfferUpdated:                             "offer_updated",
-	history.EffectTrade:                                    "trade",
-	history.EffectDataCreated:                              "data_created",
-	history.EffectDataRemoved:                              "data_removed",
-	history.EffectDataUpdated:                              "data_updated",
-	history.EffectSequenceBumped:                           "sequence_bumped",
-	history.EffectClaimableBalanceCreated:                  "claimable_balance_created",
-	history.EffectClaimableBalanceClaimantCreated:          "claimable_balance_claimant_created",
-	history.EffectClaimableBalanceClaimed:                  "claimable_balance_claimed",
-	history.EffectAccountSponsorshipCreated:                "account_sponsorship_created",
-	history.EffectAccountSponsorshipUpdated:                "account_sponsorship_updated",
-	history.EffectAccountSponsorshipRemoved:                "account_sponsorship_removed",
-	history.EffectTrustlineSponsorshipCreated:              "trustline_sponsorship_created",
-	history.EffectTrustlineSponsorshipUpdated:              "trustline_sponsorship_updated",
-	history.EffectTrustlineSponsorshipRemoved:              "trustline_sponsorship_removed",
-	history.EffectDataSponsorshipCreated:                   "data_sponsorship_created",
-	history.EffectDataSponsorshipUpdated:                   "data_sponsorship_updated",
-	history.EffectDataSponsorshipRemoved:                   "data_sponsorship_removed",
-	history.EffectClaimableBalanceSponsorshipCreated:       "claimable_balance_sponsorship_created",
-	history.EffectClaimableBalanceSponsorshipUpdated:       "claimable_balance_sponsorship_updated",
-	history.EffectClaimableBalanceSponsorshipRemoved:       "claimable_balance_sponsorship_removed",
-	history.EffectSignerSponsorshipCreated:                 "signer_sponsorship_created",
-	history.EffectSignerSponsorshipUpdated:                 "signer_sponsorship_updated",
-	history.EffectSignerSponsorshipRemoved:                 "signer_sponsorship_removed",
-	history.EffectClaimableBalanceClawedBack:               "claimable_balance_clawed_back",
+	// unused
+	// history.EffectOfferCreated:                             "offer_created",
+	// history.EffectOfferRemoved:                             "offer_removed",
+	// history.EffectOfferUpdated:                             "offer_updated",
+	history.EffectTrade:                              "trade",
+	history.EffectDataCreated:                        "data_created",
+	history.EffectDataRemoved:                        "data_removed",
+	history.EffectDataUpdated:                        "data_updated",
+	history.EffectSequenceBumped:                     "sequence_bumped",
+	history.EffectClaimableBalanceCreated:            "claimable_balance_created",
+	history.EffectClaimableBalanceClaimantCreated:    "claimable_balance_claimant_created",
+	history.EffectClaimableBalanceClaimed:            "claimable_balance_claimed",
+	history.EffectAccountSponsorshipCreated:          "account_sponsorship_created",
+	history.EffectAccountSponsorshipUpdated:          "account_sponsorship_updated",
+	history.EffectAccountSponsorshipRemoved:          "account_sponsorship_removed",
+	history.EffectTrustlineSponsorshipCreated:        "trustline_sponsorship_created",
+	history.EffectTrustlineSponsorshipUpdated:        "trustline_sponsorship_updated",
+	history.EffectTrustlineSponsorshipRemoved:        "trustline_sponsorship_removed",
+	history.EffectDataSponsorshipCreated:             "data_sponsorship_created",
+	history.EffectDataSponsorshipUpdated:             "data_sponsorship_updated",
+	history.EffectDataSponsorshipRemoved:             "data_sponsorship_removed",
+	history.EffectClaimableBalanceSponsorshipCreated: "claimable_balance_sponsorship_created",
+	history.EffectClaimableBalanceSponsorshipUpdated: "claimable_balance_sponsorship_updated",
+	history.EffectClaimableBalanceSponsorshipRemoved: "claimable_balance_sponsorship_removed",
+	history.EffectSignerSponsorshipCreated:           "signer_sponsorship_created",
+	history.EffectSignerSponsorshipUpdated:           "signer_sponsorship_updated",
+	history.EffectSignerSponsorshipRemoved:           "signer_sponsorship_removed",
+	history.EffectClaimableBalanceClawedBack:         "claimable_balance_clawed_back",
+}
+
+type muxedAccount struct {
+	AccountMuxed   string `json:"account_muxed"`
+	AccountMuxedID uint64 `json:"account_muxed_id"`
 }
 
 // NewEffect creates a new effect resource from the provided database representation
@@ -67,7 +73,12 @@ func NewEffect(
 ) (result hal.Pageable, err error) {
 
 	basev := effects.Base{}
-	PopulateBaseEffect(ctx, &basev, row, ledger)
+	var mAccount muxedAccount
+	// We abuse the details to inject muxed-account information without changing the DB schema
+	if err = row.UnmarshalDetails(&mAccount); err != nil {
+		return
+	}
+	PopulateBaseEffect(ctx, &basev, mAccount, row, ledger)
 
 	switch row.Type {
 	case history.EffectAccountCreated:
@@ -140,6 +151,8 @@ func NewEffect(
 		err = row.UnmarshalDetails(&tradeDetails)
 		if err == nil {
 			e.Seller = tradeDetails.Seller
+			e.SellerMuxed = tradeDetails.SellerMuxed
+			e.SellerMuxedID = tradeDetails.SellerMuxedID
 			e.OfferID = tradeDetails.OfferID
 			e.SoldAmount = tradeDetails.SoldAmount
 			e.SoldAssetType = tradeDetails.SoldAssetType
@@ -247,6 +260,9 @@ func NewEffect(
 		e := effects.ClaimableBalanceClawedBack{Base: basev}
 		err = row.UnmarshalDetails(&e)
 		result = e
+	case history.EffectAccountRemoved:
+		// there is no explicit data structure for account removed
+		fallthrough
 	default:
 		result = basev
 	}
@@ -265,10 +281,12 @@ func NewEffect(
 }
 
 // Populate loads this resource from `row`
-func PopulateBaseEffect(ctx context.Context, this *effects.Base, row history.Effect, ledger history.Ledger) {
+func PopulateBaseEffect(ctx context.Context, this *effects.Base, account muxedAccount, row history.Effect, ledger history.Ledger) {
 	this.ID = row.ID()
 	this.PT = row.PagingToken()
 	this.Account = row.Account
+	this.AccountMuxed = account.AccountMuxed
+	this.AccountMuxedID = account.AccountMuxedID
 	populateEffectType(this, row)
 	this.LedgerCloseTime = ledger.ClosedAt
 

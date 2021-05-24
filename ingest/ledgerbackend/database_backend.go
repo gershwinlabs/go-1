@@ -1,8 +1,10 @@
 package ledgerbackend
 
 import (
+	"context"
 	"database/sql"
 	"sort"
+	"time"
 
 	"github.com/stellar/go/network"
 	"github.com/stellar/go/support/db"
@@ -35,31 +37,26 @@ func NewDatabaseBackend(dataSourceName, networkPassphrase string) (*DatabaseBack
 		return nil, err
 	}
 
-	return &DatabaseBackend{session: session, networkPassphrase: networkPassphrase}, nil
+	return NewDatabaseBackendFromSession(session, networkPassphrase)
 }
 
-func NewDatabaseBackendFromSession(session *db.Session, networkPassphrase string) (*DatabaseBackend, error) {
-	return &DatabaseBackend{session: session, networkPassphrase: networkPassphrase}, nil
+func NewDatabaseBackendFromSession(session db.SessionInterface, networkPassphrase string) (*DatabaseBackend, error) {
+	return &DatabaseBackend{
+		session:           session,
+		networkPassphrase: networkPassphrase,
+	}, nil
 }
 
-func (dbb *DatabaseBackend) PrepareRange(ledgerRange Range) error {
-	fromExists, _, err := dbb.GetLedger(ledgerRange.from)
+func (dbb *DatabaseBackend) PrepareRange(ctx context.Context, ledgerRange Range) error {
+	_, err := dbb.GetLedger(ctx, ledgerRange.from)
 	if err != nil {
 		return errors.Wrap(err, "error getting ledger")
 	}
 
-	if !fromExists {
-		return errors.New("`from` ledger does not exist")
-	}
-
 	if ledgerRange.bounded {
-		toExists, _, err := dbb.GetLedger(ledgerRange.to)
+		_, err := dbb.GetLedger(ctx, ledgerRange.to)
 		if err != nil {
 			return errors.Wrap(err, "error getting ledger")
-		}
-
-		if !toExists {
-			return errors.New("`to` ledger does not exist")
 		}
 	}
 
@@ -67,14 +64,14 @@ func (dbb *DatabaseBackend) PrepareRange(ledgerRange Range) error {
 }
 
 // IsPrepared returns true if a given ledgerRange is prepared.
-func (*DatabaseBackend) IsPrepared(ledgerRange Range) (bool, error) {
+func (*DatabaseBackend) IsPrepared(ctx context.Context, ledgerRange Range) (bool, error) {
 	return true, nil
 }
 
 // GetLatestLedgerSequence returns the most recent ledger sequence number present in the database.
-func (dbb *DatabaseBackend) GetLatestLedgerSequence() (uint32, error) {
+func (dbb *DatabaseBackend) GetLatestLedgerSequence(ctx context.Context) (uint32, error) {
 	var ledger []ledgerHeader
-	err := dbb.session.SelectRaw(&ledger, latestLedgerSeqQuery)
+	err := dbb.session.SelectRaw(ctx, &ledger, latestLedgerSeqQuery)
 	if err != nil {
 		return 0, errors.Wrap(err, "couldn't select ledger sequence")
 	}
@@ -117,9 +114,28 @@ func sortByHash(transactions []xdr.TransactionEnvelope, passphrase string) error
 	return nil
 }
 
-// GetLedger returns the LedgerCloseMeta for the given ledger sequence number.
+// GetLedger will block until the ledger is
+// available in the backend (even for UnaboundedRange).
+// Please note that requesting a ledger sequence far after current ledger will
+// block the execution for a long time.
+func (dbb *DatabaseBackend) GetLedger(ctx context.Context, sequence uint32) (xdr.LedgerCloseMeta, error) {
+	for {
+		exists, meta, err := dbb.getLedgerQuery(ctx, sequence)
+		if err != nil {
+			return xdr.LedgerCloseMeta{}, err
+		}
+
+		if exists {
+			return meta, nil
+		} else {
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+// getLedgerQuery returns the LedgerCloseMeta for the given ledger sequence number.
 // The first returned value is false when the ledger does not exist in the database.
-func (dbb *DatabaseBackend) GetLedger(sequence uint32) (bool, xdr.LedgerCloseMeta, error) {
+func (dbb *DatabaseBackend) getLedgerQuery(ctx context.Context, sequence uint32) (bool, xdr.LedgerCloseMeta, error) {
 	lcm := xdr.LedgerCloseMeta{
 		V0: &xdr.LedgerCloseMetaV0{},
 	}
@@ -127,7 +143,7 @@ func (dbb *DatabaseBackend) GetLedger(sequence uint32) (bool, xdr.LedgerCloseMet
 	// Query - ledgerheader
 	var lRow ledgerHeaderHistory
 
-	err := dbb.session.GetRaw(&lRow, ledgerHeaderQuery, sequence)
+	err := dbb.session.GetRaw(ctx, &lRow, ledgerHeaderQuery, sequence)
 	// Return errors...
 	if err != nil {
 		switch err {
@@ -148,7 +164,7 @@ func (dbb *DatabaseBackend) GetLedger(sequence uint32) (bool, xdr.LedgerCloseMet
 
 	// Query - txhistory
 	var txhRows []txHistory
-	err = dbb.session.SelectRaw(&txhRows, txHistoryQuery+orderBy, sequence)
+	err = dbb.session.SelectRaw(ctx, &txhRows, txHistoryQuery+orderBy, sequence)
 	// Return errors...
 	if err != nil {
 		return false, lcm, errors.Wrap(err, "Error getting txHistory")
@@ -174,7 +190,7 @@ func (dbb *DatabaseBackend) GetLedger(sequence uint32) (bool, xdr.LedgerCloseMet
 
 	// Query - txfeehistory
 	var txfhRows []txFeeHistory
-	err = dbb.session.SelectRaw(&txfhRows, txFeeHistoryQuery+orderBy, sequence)
+	err = dbb.session.SelectRaw(ctx, &txfhRows, txFeeHistoryQuery+orderBy, sequence)
 	// Return errors...
 	if err != nil {
 		return false, lcm, errors.Wrap(err, "Error getting txFeeHistory")
@@ -191,7 +207,7 @@ func (dbb *DatabaseBackend) GetLedger(sequence uint32) (bool, xdr.LedgerCloseMet
 
 	// Query - upgradehistory
 	var upgradeHistoryRows []upgradeHistory
-	err = dbb.session.SelectRaw(&upgradeHistoryRows, upgradeHistoryQuery, sequence)
+	err = dbb.session.SelectRaw(ctx, &upgradeHistoryRows, upgradeHistoryQuery, sequence)
 	// Return errors...
 	if err != nil {
 		return false, lcm, errors.Wrap(err, "Error getting upgradeHistoryRows")

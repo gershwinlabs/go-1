@@ -21,6 +21,7 @@ require (
 	github.com/gobuffalo/packr v1.12.1 // indirect
 	github.com/google/go-querystring v0.0.0-20160401233042-9235644dd9e5 // indirect
 	github.com/google/martian v2.1.0+incompatible // indirect
+	github.com/google/uuid v1.2.0
 	github.com/googleapis/gax-go v2.0.2+incompatible // indirect
 	github.com/gorilla/schema v1.1.0
 	github.com/graph-gophers/graphql-go v0.0.0-20190225005345-3e8838d4614c
@@ -48,6 +49,7 @@ require (
 	github.com/onsi/ginkgo v1.7.0
 	github.com/onsi/gomega v1.4.3
 	github.com/opentracing/opentracing-go v1.1.0 // indirect
+	github.com/pelletier/go-toml v1.9.0
 	github.com/pkg/errors v0.8.1
 	github.com/prometheus/client_golang v0.9.3-0.20190127221311-3c4408c8b829
 	github.com/prometheus/client_model v0.0.0-20190115171406-56726106282f
@@ -70,6 +72,7 @@ require (
 	github.com/tyler-smith/go-bip39 v0.0.0-20180618194314-52158e4697b8
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v0.0.0-20170109085056-0a7f0a797cd6 // indirect
+	github.com/xdrpp/goxdr v0.1.0
 	github.com/xeipuuv/gojsonpointer v0.0.0-20151027082146-e0fe6f683076 // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20150808065054-e02fc20de94c // indirect
 	github.com/xeipuuv/gojsonschema v0.0.0-20161231055540-f06f290571ce // indirect

@@ -3,6 +3,7 @@
 package processors
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,7 @@ import (
 
 type EffectsProcessorTestSuiteLedger struct {
 	suite.Suite
+	ctx                    context.Context
 	processor              *EffectProcessor
 	mockQ                  *history.MockQEffects
 	mockBatchInsertBuilder *history.MockEffectBatchInsertBuilder
@@ -42,6 +44,7 @@ func TestEffectsProcessorTestSuiteLedger(t *testing.T) {
 }
 
 func (s *EffectsProcessorTestSuiteLedger) SetupTest() {
+	s.ctx = context.Background()
 	s.mockQ = &history.MockQEffects{}
 	s.mockBatchInsertBuilder = &history.MockEffectBatchInsertBuilder{}
 
@@ -131,6 +134,7 @@ func (s *EffectsProcessorTestSuiteLedger) TearDownTest() {
 func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulEffectBatchAdds() {
 	s.mockBatchInsertBuilder.On(
 		"Add",
+		s.ctx,
 		s.addressToID[s.addresses[2]],
 		toid.New(int32(s.sequence), 1, 1).ToInt64(),
 		uint32(1),
@@ -139,6 +143,7 @@ func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulEffectBatchAdds() {
 	).Return(nil).Once()
 	s.mockBatchInsertBuilder.On(
 		"Add",
+		s.ctx,
 		s.addressToID[s.addresses[2]],
 		toid.New(int32(s.sequence), 2, 1).ToInt64(),
 		uint32(1),
@@ -147,6 +152,7 @@ func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulEffectBatchAdds() {
 	).Return(nil).Once()
 	s.mockBatchInsertBuilder.On(
 		"Add",
+		s.ctx,
 		s.addressToID[s.addresses[1]],
 		toid.New(int32(s.sequence), 2, 1).ToInt64(),
 		uint32(2),
@@ -155,6 +161,7 @@ func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulEffectBatchAdds() {
 	).Return(nil).Once()
 	s.mockBatchInsertBuilder.On(
 		"Add",
+		s.ctx,
 		s.addressToID[s.addresses[2]],
 		toid.New(int32(s.sequence), 2, 1).ToInt64(),
 		uint32(3),
@@ -164,6 +171,7 @@ func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulEffectBatchAdds() {
 
 	s.mockBatchInsertBuilder.On(
 		"Add",
+		s.ctx,
 		s.addressToID[s.addresses[0]],
 		toid.New(int32(s.sequence), 3, 1).ToInt64(),
 		uint32(1),
@@ -173,6 +181,7 @@ func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulEffectBatchAdds() {
 
 	s.mockBatchInsertBuilder.On(
 		"Add",
+		s.ctx,
 		s.addressToID[s.addresses[0]],
 		toid.New(int32(s.sequence), 3, 1).ToInt64(),
 		uint32(2),
@@ -184,16 +193,17 @@ func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulEffectBatchAdds() {
 func (s *EffectsProcessorTestSuiteLedger) mockSuccessfulCreateAccounts() {
 	s.mockQ.On(
 		"CreateAccounts",
+		s.ctx,
 		mock.AnythingOfType("[]string"),
 		maxBatchSize,
 	).Run(func(args mock.Arguments) {
-		arg := args.Get(0).([]string)
+		arg := args.Get(1).([]string)
 		s.Assert().ElementsMatch(s.addresses, arg)
 	}).Return(s.addressToID, nil).Once()
 }
 
 func (s *EffectsProcessorTestSuiteLedger) TestEmptyEffects() {
-	err := s.processor.Commit()
+	err := s.processor.Commit(context.Background())
 	s.Assert().NoError(err)
 }
 
@@ -204,25 +214,25 @@ func (s *EffectsProcessorTestSuiteLedger) TestIngestEffectsSucceeds() {
 
 	s.mockSuccessfulEffectBatchAdds()
 
-	s.mockBatchInsertBuilder.On("Exec").Return(nil).Once()
+	s.mockBatchInsertBuilder.On("Exec", s.ctx).Return(nil).Once()
 
 	for _, tx := range s.txs {
-		err := s.processor.ProcessTransaction(tx)
+		err := s.processor.ProcessTransaction(s.ctx, tx)
 		s.Assert().NoError(err)
 	}
-	err := s.processor.Commit()
+	err := s.processor.Commit(s.ctx)
 	s.Assert().NoError(err)
 }
 
 func (s *EffectsProcessorTestSuiteLedger) TestCreateAccountsFails() {
-	s.mockQ.On("CreateAccounts", mock.AnythingOfType("[]string"), maxBatchSize).
+	s.mockQ.On("CreateAccounts", s.ctx, mock.AnythingOfType("[]string"), maxBatchSize).
 		Return(s.addressToID, errors.New("transient error")).Once()
 
 	for _, tx := range s.txs {
-		err := s.processor.ProcessTransaction(tx)
+		err := s.processor.ProcessTransaction(s.ctx, tx)
 		s.Assert().NoError(err)
 	}
-	err := s.processor.Commit()
+	err := s.processor.Commit(s.ctx)
 	s.Assert().EqualError(err, "Could not create account ids: transient error")
 }
 
@@ -232,7 +242,7 @@ func (s *EffectsProcessorTestSuiteLedger) TestBatchAddFails() {
 		Return(s.mockBatchInsertBuilder).Once()
 
 	s.mockBatchInsertBuilder.On(
-		"Add",
+		"Add", s.ctx,
 		s.addressToID[s.addresses[2]],
 		toid.New(int32(s.sequence), 1, 1).ToInt64(),
 		uint32(1),
@@ -240,10 +250,10 @@ func (s *EffectsProcessorTestSuiteLedger) TestBatchAddFails() {
 		[]byte("{\"new_seq\":300000000000}"),
 	).Return(errors.New("transient error")).Once()
 	for _, tx := range s.txs {
-		err := s.processor.ProcessTransaction(tx)
+		err := s.processor.ProcessTransaction(s.ctx, tx)
 		s.Assert().NoError(err)
 	}
-	err := s.processor.Commit()
+	err := s.processor.Commit(s.ctx)
 	s.Assert().EqualError(err, "could not insert operation effect in db: transient error")
 }
 
@@ -414,6 +424,61 @@ func getRevokeSponsorshipMeta(t *testing.T) (string, []effect) {
 	assert.NoError(t, err)
 
 	return b64, expectedEffects
+}
+
+func TestEffectsCoversAllOperationTypes(t *testing.T) {
+	for typ, s := range xdr.OperationTypeToStringMap {
+		op := xdr.Operation{
+			Body: xdr.OperationBody{
+				Type: xdr.OperationType(typ),
+			},
+		}
+		operation := transactionOperationWrapper{
+			index: 0,
+			transaction: ingest.LedgerTransaction{
+				UnsafeMeta: xdr.TransactionMeta{
+					V:  2,
+					V2: &xdr.TransactionMetaV2{},
+				},
+			},
+			operation:      op,
+			ledgerSequence: 1,
+		}
+		// calling effects should either panic (because the operation field is set to nil)
+		// or not error
+		func() {
+			var err error
+			defer func() {
+				err2 := recover()
+				if err != nil {
+					assert.NotContains(t, err.Error(), "Unknown operation type")
+				}
+				assert.True(t, err2 != nil || err == nil, s)
+			}()
+			_, err = operation.effects()
+		}()
+	}
+
+	// make sure the check works for an unknown operation type
+	op := xdr.Operation{
+		Body: xdr.OperationBody{
+			Type: xdr.OperationType(20000),
+		},
+	}
+	operation := transactionOperationWrapper{
+		index: 0,
+		transaction: ingest.LedgerTransaction{
+			UnsafeMeta: xdr.TransactionMeta{
+				V:  2,
+				V2: &xdr.TransactionMetaV2{},
+			},
+		},
+		operation:      op,
+		ledgerSequence: 1,
+	}
+	// calling effects should error due to the unknown operation
+	_, err := operation.effects()
+	assert.Contains(t, err.Error(), "Unknown operation type")
 }
 
 func TestOperationEffects(t *testing.T) {
@@ -881,10 +946,12 @@ func TestOperationEffects(t *testing.T) {
 				{
 					address: "GDEOVUDLCYTO46D6GD6WH7BFESPBV5RACC6F6NUFCIRU7PL2XONQHVGJ",
 					details: map[string]interface{}{
-						"amount":       "1.0000000",
-						"asset_code":   "ARS",
-						"asset_type":   "credit_alphanum4",
-						"asset_issuer": "GCXI6Q73J7F6EUSBZTPW4G4OUGVDHABPYF2U4KO7MVEX52OH5VMVUCRF",
+						"account_muxed":    "MDEOVUDLCYTO46D6GD6WH7BFESPBV5RACC6F6NUFCIRU7PL2XONQGAAAAAAMV7V2X24II",
+						"account_muxed_id": uint64(0xcafebabe),
+						"amount":           "1.0000000",
+						"asset_code":       "ARS",
+						"asset_type":       "credit_alphanum4",
+						"asset_issuer":     "GCXI6Q73J7F6EUSBZTPW4G4OUGVDHABPYF2U4KO7MVEX52OH5VMVUCRF",
 					},
 					effectType:  history.EffectAccountCredited,
 					operationID: int64(85899350017),
@@ -893,10 +960,12 @@ func TestOperationEffects(t *testing.T) {
 				{
 					address: "GD3MMHD2YZWL5RAUWG6O3RMA5HTZYM7S3JLSZ2Z35JNJAWTDIKXY737V",
 					details: map[string]interface{}{
-						"amount":       "0.0300000",
-						"asset_code":   "BRL",
-						"asset_type":   "credit_alphanum4",
-						"asset_issuer": "GCXI6Q73J7F6EUSBZTPW4G4OUGVDHABPYF2U4KO7MVEX52OH5VMVUCRF",
+						"account_muxed":    "MD3MMHD2YZWL5RAUWG6O3RMA5HTZYM7S3JLSZ2Z35JNJAWTDIKXY6AAAAAAMV7V2XZY4C",
+						"account_muxed_id": uint64(0xcafebabe),
+						"amount":           "0.0300000",
+						"asset_code":       "BRL",
+						"asset_type":       "credit_alphanum4",
+						"asset_issuer":     "GCXI6Q73J7F6EUSBZTPW4G4OUGVDHABPYF2U4KO7MVEX52OH5VMVUCRF",
 					},
 					effectType:  history.EffectAccountDebited,
 					operationID: int64(85899350017),
@@ -905,6 +974,8 @@ func TestOperationEffects(t *testing.T) {
 				{
 					address: "GD3MMHD2YZWL5RAUWG6O3RMA5HTZYM7S3JLSZ2Z35JNJAWTDIKXY737V",
 					details: map[string]interface{}{
+						"account_muxed":       "MD3MMHD2YZWL5RAUWG6O3RMA5HTZYM7S3JLSZ2Z35JNJAWTDIKXY6AAAAAAMV7V2XZY4C",
+						"account_muxed_id":    uint64(0xcafebabe),
 						"seller":              "GDEOVUDLCYTO46D6GD6WH7BFESPBV5RACC6F6NUFCIRU7PL2XONQHVGJ",
 						"offer_id":            xdr.Int64(10072128),
 						"sold_amount":         "0.0300000",
@@ -924,6 +995,8 @@ func TestOperationEffects(t *testing.T) {
 					address: "GDEOVUDLCYTO46D6GD6WH7BFESPBV5RACC6F6NUFCIRU7PL2XONQHVGJ",
 					details: map[string]interface{}{
 						"seller":              "GD3MMHD2YZWL5RAUWG6O3RMA5HTZYM7S3JLSZ2Z35JNJAWTDIKXY737V",
+						"seller_muxed":        "MD3MMHD2YZWL5RAUWG6O3RMA5HTZYM7S3JLSZ2Z35JNJAWTDIKXY6AAAAAAMV7V2XZY4C",
+						"seller_muxed_id":     uint64(0xcafebabe),
 						"offer_id":            xdr.Int64(10072128),
 						"sold_amount":         "1.0000000",
 						"bought_amount":       "0.0300000",
@@ -1499,7 +1572,7 @@ func TestOperationEffects(t *testing.T) {
 func TestOperationEffectsSetOptionsSignersOrder(t *testing.T) {
 	tt := assert.New(t)
 	transaction := ingest.LedgerTransaction{
-		Meta: createTransactionMeta([]xdr.OperationMeta{
+		UnsafeMeta: createTransactionMeta([]xdr.OperationMeta{
 			{
 				Changes: []xdr.LedgerEntryChange{
 					// State
@@ -1630,7 +1703,7 @@ func TestOperationEffectsSetOptionsSignersOrder(t *testing.T) {
 func TestOperationEffectsSetOptionsSignersNoUpdated(t *testing.T) {
 	tt := assert.New(t)
 	transaction := ingest.LedgerTransaction{
-		Meta: createTransactionMeta([]xdr.OperationMeta{
+		UnsafeMeta: createTransactionMeta([]xdr.OperationMeta{
 			{
 				Changes: []xdr.LedgerEntryChange{
 					// State
@@ -1751,7 +1824,7 @@ func TestOperationRegressionAccountTrustItself(t *testing.T) {
 	// NOTE:  when an account trusts itself, the transaction is successful but
 	// no ledger entries are actually modified.
 	transaction := ingest.LedgerTransaction{
-		Meta: createTransactionMeta([]xdr.OperationMeta{}),
+		UnsafeMeta: createTransactionMeta([]xdr.OperationMeta{}),
 	}
 	transaction.Index = 1
 	transaction.Envelope.Type = xdr.EnvelopeTypeEnvelopeTypeTx
@@ -1803,7 +1876,7 @@ func TestOperationEffectsAllowTrustAuthorizedToMaintainLiabilities(t *testing.T)
 	operation := transactionOperationWrapper{
 		index: 0,
 		transaction: ingest.LedgerTransaction{
-			Meta: xdr.TransactionMeta{
+			UnsafeMeta: xdr.TransactionMeta{
 				V:  2,
 				V2: &xdr.TransactionMetaV2{},
 			},
@@ -1864,7 +1937,7 @@ func TestOperationEffectsClawback(t *testing.T) {
 	operation := transactionOperationWrapper{
 		index: 0,
 		transaction: ingest.LedgerTransaction{
-			Meta: xdr.TransactionMeta{
+			UnsafeMeta: xdr.TransactionMeta{
 				V:  2,
 				V2: &xdr.TransactionMetaV2{},
 			},
@@ -1924,7 +1997,7 @@ func TestOperationEffectsClawbackClaimableBalance(t *testing.T) {
 	operation := transactionOperationWrapper{
 		index: 0,
 		transaction: ingest.LedgerTransaction{
-			Meta: xdr.TransactionMeta{
+			UnsafeMeta: xdr.TransactionMeta{
 				V:  2,
 				V2: &xdr.TransactionMetaV2{},
 			},
@@ -1973,7 +2046,7 @@ func TestOperationEffectsSetTrustLineFlags(t *testing.T) {
 	operation := transactionOperationWrapper{
 		index: 0,
 		transaction: ingest.LedgerTransaction{
-			Meta: xdr.TransactionMeta{
+			UnsafeMeta: xdr.TransactionMeta{
 				V:  2,
 				V2: &xdr.TransactionMetaV2{},
 			},
@@ -2111,7 +2184,7 @@ func (s *CreateClaimableBalanceEffectsTestSuite) SetupTest() {
 			},
 		},
 		FeeChanges: xdr.LedgerEntryChanges{},
-		Meta: xdr.TransactionMeta{
+		UnsafeMeta: xdr.TransactionMeta{
 			V: 2,
 			V2: &xdr.TransactionMetaV2{
 				Operations: []xdr.OperationMeta{
@@ -2339,7 +2412,7 @@ func (s *ClaimClaimableBalanceEffectsTestSuite) SetupTest() {
 			},
 		},
 		FeeChanges: xdr.LedgerEntryChanges{},
-		Meta: xdr.TransactionMeta{
+		UnsafeMeta: xdr.TransactionMeta{
 			V: 2,
 			V2: &xdr.TransactionMetaV2{
 				Operations: []xdr.OperationMeta{

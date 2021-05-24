@@ -22,7 +22,8 @@ import (
 )
 
 type ServerMetrics struct {
-	RequestDurationSummary *prometheus.SummaryVec
+	RequestDurationSummary  *prometheus.SummaryVec
+	ReplicaLagErrorsCounter prometheus.Counter
 }
 
 type TLSConfig struct {
@@ -46,6 +47,7 @@ type Server struct {
 
 func init() {
 	// register problems
+	problem.SetLogFilter(problem.LogUnknownErrors)
 	problem.RegisterError(sql.ErrNoRows, problem.NotFound)
 	problem.RegisterError(sequence.ErrNoMoreRoom, hProblem.ServerOverCapacity)
 	problem.RegisterError(db2.ErrInvalidCursor, problem.BadRequest)
@@ -65,6 +67,12 @@ func NewServer(serverConfig ServerConfig, routerConfig RouterConfig, ledgerState
 				Help: "HTTP requests durations, sliding window = 10m",
 			},
 			[]string{"status", "route", "streaming", "method"},
+		),
+		ReplicaLagErrorsCounter: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: "horizon", Subsystem: "http", Name: "replica_lag_errors_count",
+				Help: "Count of HTTP errors returned due to replica lag",
+			},
 		),
 	}
 	router, err := NewRouter(&routerConfig, sm, ledgerState)
